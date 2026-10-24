@@ -15,7 +15,7 @@ create table if not exists public.records (
 create index if not exists records_user_synced on public.records (user_id, synced_at);
 
 create or replace function public.touch_synced_at() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = '' as $$
 begin
   new.synced_at := clock_timestamp();
   return new;
@@ -27,9 +27,11 @@ create trigger records_touch before insert or update on public.records
 
 -- Each user can only see and change their own records.
 alter table public.records enable row level security;
+revoke all on public.records from anon;
+grant select, insert, update, delete on public.records to authenticated;
 
 drop policy if exists "own records" on public.records;
 create policy "own records" on public.records
   for all to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));

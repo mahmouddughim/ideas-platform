@@ -64,9 +64,12 @@ function status(state, detail) {
 }
 
 async function pull(sb) {
-  const since = (await getMeta('lastPullAt')) || '1970-01-01T00:00:00Z';
+  // Look back a few seconds: a write committed late can carry a slightly older synced_at.
+  // Re-merging a record we already have changes nothing.
+  const last = await getMeta('lastPullAt');
+  const since = last ? new Date(new Date(last).getTime() - 5000).toISOString() : '1970-01-01T00:00:00Z';
   const payload = { format: FORMAT, version: FORMAT_VERSION, ideas: [], sections: [] };
-  let newest = since;
+  let newest = last || since;
   const pageSize = 500;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await sb
@@ -78,7 +81,7 @@ async function pull(sb) {
     if (error) throw error;
     for (const r of data) {
       payload[r.kind]?.push(r.data);
-      if (r.synced_at > newest) newest = r.synced_at;
+      if (Date.parse(r.synced_at) > Date.parse(newest)) newest = r.synced_at;
     }
     if (data.length < pageSize) break;
   }
