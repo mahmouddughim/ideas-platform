@@ -199,3 +199,8 @@ textarea { resize: vertical; }
   .filters { grid-template-columns: 1fr 1fr; }
   .filters input { grid-column: 1 / -1; }
 }
+
+.sync-status { display: inline-flex; align-items: center; padding: 0 4px; font-size: 1.1rem; }
+.auth-form { display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.drive-file { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
+[hidden] { display: none !important; }

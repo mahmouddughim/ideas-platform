@@ -1,0 +1,9 @@
+// Public settings for cloud features. These values are safe to publish:
+// access to data is protected by sign-in and row level security, not by these keys.
+// Leave a value empty to turn that feature off.
+export const config = {
+  supabaseUrl: 'https://lfgolzddxnghacfeukml.supabase.co',
+  supabaseKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxmZ29semRkeG5naGFjZmV1a21sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4MzE4MzYsImV4cCI6MjEwODQwNzgzNn0.B79VIDS1mGPfZK8fLBajTQ3CxXIV4sfQNfTN6Gy8Sy4',
+  googleClientId: '',
+};

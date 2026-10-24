@@ -15,12 +15,24 @@ desktop (PWA), works offline.
 - Export for Claude / import Claude's analysis (see [docs/claude-format.md](docs/claude-format.md))
 - Claude's analysis view: popularity meter, similar projects, improvements, missed points, questions with yes/no + long answers
 - Manual backup file with a weekly reminder
+- Sync between phone and computer through Supabase (email + password sign-in)
+- Weekly backup to Google Drive (folder "Ideas Backup", newest 8 kept) with restore
+
+## Cloud setup
+
+Fill in `js/config.js`:
+
+- `supabaseUrl`, `supabaseKey`: from Supabase Project Settings -> API. Run
+  `supabase/schema.sql` once in the Supabase SQL editor.
+- `googleClientId`: an OAuth "Web application" client from Google Cloud with the
+  Drive API enabled and `https://mahmouddughim.github.io` as an authorized
+  JavaScript origin.
+
+These values are public by design; data is protected by sign-in and row level security.
 
 ## Roadmap
 
-1. Google sign-in and sync between phone and computer (Supabase)
-2. Automatic weekly backup to Google Drive
-3. Claude imports and writes analysis directly, without files
+- Claude imports and writes analysis directly, without files
 
 ## Run locally
 
@@ -39,5 +51,7 @@ Then open http://localhost:8000. On a phone, open the hosted URL and choose
 - `js/db.js` — IndexedDB storage on the device
 - `js/model.js` — ideas, sections, version history
 - `js/transfer.js` — export / import and merge rules
+- `js/sync.js` — Supabase sync
+- `js/drive.js` — Google Drive backups
 - `js/app.js` — views and routing
 - `sw.js`, `manifest.webmanifest` — offline support and install
