@@ -457,7 +457,8 @@ def ablaq_material():
     brick.inputs["Scale"].default_value = 1.0
     brick.inputs["Brick Width"].default_value = 0.7
     brick.inputs["Row Height"].default_value = 0.28
-    brick.inputs["Mortar Size"].default_value = 0.012
+    brick.inputs["Mortar Size"].default_value = 0.02
+    brick.inputs["Mortar Smooth"].default_value = 0.6  # حواف متآكلة
     brick.inputs["Color1"].default_value = (1.0, 1.0, 1.0, 1)
     brick.inputs["Color2"].default_value = (0.6, 0.6, 0.6, 1)
     brick.inputs["Bias"].default_value = 0.0
@@ -470,7 +471,20 @@ def ablaq_material():
     nt.links.new(sep.outputs["Y"], add.inputs[1])
     nt.links.new(add.outputs["Value"], comb.inputs["X"])
     nt.links.new(sep.outputs["Z"], comb.inputs["Y"])
-    nt.links.new(comb.outputs["Vector"], brick.inputs["Vector"])
+    # تشويه خفيف للإحداثيات: حواف حجارة غير مستقيمة كالحجر المنحوت يدوياً.
+    jitter = nt.nodes.new("ShaderNodeTexNoise")
+    jitter.inputs["Scale"].default_value = 6.0
+    nt.links.new(comb.outputs["Vector"], jitter.inputs["Vector"])
+    jit = nt.nodes.new("ShaderNodeVectorMath")
+    jit.operation = "MULTIPLY_ADD"
+    jit.inputs[1].default_value = (0.035, 0.02, 0.0)
+    jit.inputs[2].default_value = (-0.017, -0.01, 0.0)
+    nt.links.new(jitter.outputs["Color"], jit.inputs[0])
+    warped = nt.nodes.new("ShaderNodeVectorMath")
+    warped.operation = "ADD"
+    nt.links.new(comb.outputs["Vector"], warped.inputs[0])
+    nt.links.new(jit.outputs["Vector"], warped.inputs[1])
+    nt.links.new(warped.outputs["Vector"], brick.inputs["Vector"])
     noise = nt.nodes.new("ShaderNodeTexNoise")
     noise.inputs["Scale"].default_value = 4.0
     noise.inputs["Detail"].default_value = 12.0
@@ -496,9 +510,9 @@ def ablaq_material():
     nt.links.new(brick.outputs["Color"], shade.inputs["B"])
     nt.links.new(shade.outputs["Result"], bsdf.inputs["Base Color"])
     # الحجر مبلل: أكثر لمعاناً من الجاف.
-    bsdf.inputs["Roughness"].default_value = 0.35
+    bsdf.inputs["Roughness"].default_value = 0.45
     bp = nt.nodes.new("ShaderNodeBump")
-    bp.inputs["Strength"].default_value = 0.35
+    bp.inputs["Strength"].default_value = 0.6
     nt.links.new(brick.outputs["Fac"], bp.inputs["Height"])
     nt.links.new(bp.outputs["Normal"], bsdf.inputs["Normal"])
     return mat
@@ -624,7 +638,7 @@ def mashrabiya_material(wood):
     nt.links.new(rot.outputs["Vector"], brick.inputs["Vector"])
     glow = nt.nodes.new("ShaderNodeEmission")
     glow.inputs["Color"].default_value = (1.0, 0.6, 0.28, 1)
-    glow.inputs["Strength"].default_value = 1.8
+    glow.inputs["Strength"].default_value = 0.6  # ضوء يتسرب من بين فتحات الشبكة فقط
     wood_bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
     wood_bsdf.inputs["Base Color"].default_value = (0.09, 0.045, 0.02, 1)
     wood_bsdf.inputs["Roughness"].default_value = 0.5
@@ -647,6 +661,221 @@ def rain_drop_material():
     return mat
 
 
+# ---------- old lantern ----------
+
+def old_lantern(name, loc, side, iron, seed):
+    # فانوس قديم سداسي بزجاج مغبّش وإطار حديدي، معلق بسلسلة من ذراع حديدي مزخرف.
+    x, y, z = loc
+    wall_x = side * ALLEY_W / 2
+    box(name + "_arm", (abs(wall_x - x) + 0.05, 0.03, 0.03), ((wall_x + x) / 2, y, z + 0.62), iron)
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.1, minor_radius=0.008, location=((wall_x + x) / 2, y, z + 0.5),
+                                     rotation=(math.pi / 2, 0, 0))
+    scroll = bpy.context.view_layer.objects.active
+    scroll.name = name + "_scroll"
+    scroll.data.materials.append(iron)
+    cylinder(name + "_chain", 0.006, 0.3, (x, y, z + 0.47), iron, verts=6)
+    glass = emission_material(name + "_glass", (1.0, 0.5, 0.15), 2.0)
+    bpy.ops.mesh.primitive_cone_add(vertices=6, radius1=0.08, radius2=0.12, depth=0.3, location=(x, y, z))
+    body = bpy.context.view_layer.objects.active
+    body.name = name + "_body"
+    body.data.materials.append(glass)
+    body.visible_shadow = False
+    bpy.ops.mesh.primitive_cone_add(vertices=6, radius1=0.085, radius2=0.125, depth=0.3, location=(x, y, z))
+    frame = bpy.context.view_layer.objects.active
+    frame.name = name + "_frame"
+    frame.data.materials.append(iron)
+    frame.modifiers.new("Frame", "WIREFRAME").thickness = 0.012
+    bpy.ops.mesh.primitive_cone_add(vertices=6, radius1=0.15, radius2=0.015, depth=0.14, location=(x, y, z + 0.22))
+    roof = bpy.context.view_layer.objects.active
+    roof.name = name + "_roof"
+    roof.data.materials.append(iron)
+    cylinder(name + "_base", 0.09, 0.03, (x, y, z - 0.16), iron, verts=6)
+    bpy.ops.object.light_add(type="POINT", location=(x, y, z))
+    light = bpy.context.view_layer.objects.active
+    light.name = name + "_light"
+    light.data.color = (1.0, 0.52, 0.18)
+    light.data.shadow_soft_size = 0.06
+    drv = light.data.driver_add("energy").driver
+    drv.type = "SCRIPTED"
+    f = FRAMES
+    # ضوء خافت يرتعش كلهب زيت، ويعود لنقطته الأولى في آخر الحلقة.
+    drv.expression = (
+        f"22 + 5*sin(frame*6.2832*9/{f}+{seed}) + 4*sin(frame*6.2832*17/{f}+{seed * 2})"
+        f" + 2*sin(frame*6.2832*37/{f}+{seed * 3})"
+    )
+
+
+# ---------- aging ----------
+
+def age_material(mat, patch_color, patch_amount=0.25, streaks=True, base_dirt=True):
+    # يضيف للخامة أثر الزمن فوق لونها الأصلي: بقع متقشرة يظهر تحتها لون آخر (طين أو حجر)،
+    # خطوط رطوبة عمودية تنزل من الأعلى، واتساخ داكن عند أسفل الجدار.
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    sock = bsdf.inputs["Base Color"]
+    old = next((l for l in nt.links if l.to_socket == sock), None)
+    color = old.from_socket if old else None
+    if color is None:
+        rgb = nt.nodes.new("ShaderNodeRGB")
+        rgb.outputs[0].default_value = sock.default_value[:]
+        color = rgb.outputs[0]
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    # بقع التقشر: ضجيج بحواف حادة.
+    pn = nt.nodes.new("ShaderNodeTexNoise")
+    pn.inputs["Scale"].default_value = 2.6
+    pn.inputs["Detail"].default_value = 12.0
+    pn.inputs["Roughness"].default_value = 0.7
+    nt.links.new(geo.outputs["Position"], pn.inputs["Vector"])
+    mask = nt.nodes.new("ShaderNodeMapRange")
+    mask.inputs["From Min"].default_value = 0.62 - patch_amount * 0.3
+    mask.inputs["From Max"].default_value = 0.70 - patch_amount * 0.3
+    nt.links.new(pn.outputs["Fac"], mask.inputs["Value"])
+    patch = nt.nodes.new("ShaderNodeMix")
+    patch.data_type = "RGBA"
+    nt.links.new(mask.outputs["Result"], patch.inputs["Factor"])
+    nt.links.new(color, patch.inputs["A"])
+    patch.inputs["B"].default_value = (*patch_color, 1)
+    color = patch.outputs["Result"]
+    # البقع منخفضة قليلاً عن السطح (الجص سقط منها).
+    bp = nt.nodes.new("ShaderNodeBump")
+    bp.inputs["Strength"].default_value = 0.6
+    bp.inputs["Distance"].default_value = 0.01
+    inv = nt.nodes.new("ShaderNodeMath")
+    inv.operation = "SUBTRACT"
+    inv.inputs[0].default_value = 1.0
+    nt.links.new(mask.outputs["Result"], inv.inputs[1])
+    nt.links.new(inv.outputs["Value"], bp.inputs["Height"])
+    old_n = next((l for l in nt.links if l.to_socket == bsdf.inputs["Normal"]), None)
+    if old_n:
+        nt.links.new(old_n.from_socket, bp.inputs["Normal"])
+    nt.links.new(bp.outputs["Normal"], bsdf.inputs["Normal"])
+    if streaks:
+        # خطوط رطوبة: ضجيج ممطوط عمودياً.
+        st_map = nt.nodes.new("ShaderNodeMapping")
+        st_map.inputs["Scale"].default_value = (6.0, 6.0, 0.35)
+        nt.links.new(geo.outputs["Position"], st_map.inputs["Vector"])
+        st = nt.nodes.new("ShaderNodeTexNoise")
+        st.inputs["Scale"].default_value = 2.0
+        st.inputs["Detail"].default_value = 4.0
+        nt.links.new(st_map.outputs["Vector"], st.inputs["Vector"])
+        st_r = nt.nodes.new("ShaderNodeMapRange")
+        st_r.inputs["From Min"].default_value = 0.45
+        st_r.inputs["From Max"].default_value = 0.75
+        st_r.inputs["To Min"].default_value = 1.0
+        st_r.inputs["To Max"].default_value = 0.75
+        nt.links.new(st.outputs["Fac"], st_r.inputs["Value"])
+        dark = nt.nodes.new("ShaderNodeMix")
+        dark.data_type = "RGBA"
+        dark.blend_type = "MULTIPLY"
+        dark.inputs["Factor"].default_value = 1.0
+        nt.links.new(color, dark.inputs["A"])
+        comb = nt.nodes.new("ShaderNodeCombineColor")
+        for k in ("Red", "Green", "Blue"):
+            nt.links.new(st_r.outputs["Result"], comb.inputs[k])
+        nt.links.new(comb.outputs["Color"], dark.inputs["B"])
+        color = dark.outputs["Result"]
+    if base_dirt:
+        # اتساخ ورطوبة صاعدة من الأرض حتى ارتفاع متر تقريباً، بحافة متموجة.
+        sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+        nt.links.new(geo.outputs["Position"], sep.inputs["Vector"])
+        wob = nt.nodes.new("ShaderNodeTexNoise")
+        wob.inputs["Scale"].default_value = 3.0
+        nt.links.new(geo.outputs["Position"], wob.inputs["Vector"])
+        hz = nt.nodes.new("ShaderNodeMath")
+        hz.operation = "MULTIPLY_ADD"
+        hz.inputs[2].default_value = -0.3
+        nt.links.new(wob.outputs["Fac"], hz.inputs[0])
+        hz.inputs[1].default_value = 0.6
+        add = nt.nodes.new("ShaderNodeMath")
+        add.operation = "ADD"
+        nt.links.new(sep.outputs["Z"], add.inputs[0])
+        nt.links.new(hz.outputs["Value"], add.inputs[1])
+        rise = nt.nodes.new("ShaderNodeMapRange")
+        rise.inputs["From Min"].default_value = 0.2
+        rise.inputs["From Max"].default_value = 1.1
+        rise.inputs["To Min"].default_value = 0.35
+        rise.inputs["To Max"].default_value = 1.0
+        nt.links.new(add.outputs["Value"], rise.inputs["Value"])
+        dirt = nt.nodes.new("ShaderNodeMix")
+        dirt.data_type = "RGBA"
+        dirt.blend_type = "MULTIPLY"
+        dirt.inputs["Factor"].default_value = 1.0
+        nt.links.new(color, dirt.inputs["A"])
+        comb2 = nt.nodes.new("ShaderNodeCombineColor")
+        nt.links.new(rise.outputs["Result"], comb2.inputs["Red"])
+        nt.links.new(rise.outputs["Result"], comb2.inputs["Green"])
+        g = nt.nodes.new("ShaderNodeMath")  # الرطوبة تميل للأخضر قليلاً
+        g.operation = "MULTIPLY"
+        g.inputs[1].default_value = 0.92
+        nt.links.new(rise.outputs["Result"], g.inputs[0])
+        nt.links.new(g.outputs["Value"], comb2.inputs["Blue"])
+        nt.links.new(comb2.outputs["Color"], dirt.inputs["B"])
+        color = dirt.outputs["Result"]
+    nt.links.new(color, sock)
+    return mat
+
+
+def warp(ob, strength=0.06, scale=1.5, cuts=24):
+    # يجعل الجدار المستقيم غير منتظم قليلاً: انتفاخات وميلان كما في البيوت القديمة.
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.subdivide(number_cuts=cuts)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    tex = bpy.data.textures.get("WallWarp") or bpy.data.textures.new("WallWarp", "CLOUDS")
+    tex.noise_scale = scale
+    mod = ob.modifiers.new("Warp", "DISPLACE")
+    mod.texture = tex
+    mod.texture_coords = "GLOBAL"
+    mod.direction = "X"
+    mod.strength = strength
+    mod.mid_level = 0.5
+
+
+def half_disc(name, radius, thickness, center, side, mat, segments=16):
+    # نصف دائرة (قوس فوق الباب) بسماكة، تواجه الزقاق.
+    cx, cy, cz = center
+    verts = []
+    for k in range(segments + 1):
+        a = math.pi * k / segments
+        for t in (0, thickness):
+            verts.append((cx - side * t, cy + radius * math.cos(a), cz + radius * math.sin(a)))
+    verts += [(cx, cy, cz), (cx - side * thickness, cy, cz)]
+    c0, c1 = len(verts) - 2, len(verts) - 1
+    faces = []
+    for k in range(segments):
+        a0, a1, b0, b1 = 2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 3
+        faces += [(a0, b0, b1, a1), (c0, b0, a0), (c1, a1, b1)]
+    faces.append((0, 1, c1, c0))
+    faces.append((2 * segments, c0, c1, 2 * segments + 1))
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.materials.append(mat)
+    ob = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(ob)
+    return ob
+
+
+def wire(name, a, b, sag, mat):
+    # سلك كهرباء متدلٍّ بين نقطتين (منحنى سلسلة).
+    curve = bpy.data.curves.new(name, "CURVE")
+    curve.dimensions = "3D"
+    curve.bevel_depth = 0.006
+    spline = curve.splines.new("POLY")
+    n = 16
+    spline.points.add(n)
+    for k in range(n + 1):
+        t = k / n
+        x = a[0] + (b[0] - a[0]) * t
+        y = a[1] + (b[1] - a[1]) * t
+        z = a[2] + (b[2] - a[2]) * t - sag * 4 * t * (1 - t)
+        spline.points[k].co = (x, y, z, 1)
+    curve.materials.append(mat)
+    ob = bpy.data.objects.new(name, curve)
+    bpy.context.collection.objects.link(ob)
+    return ob
+
+
 # ---------- buildings ----------
 
 def facade_segments(rng):
@@ -665,8 +894,16 @@ def house(name, side, y0, width, height, mats, rng):
     jog = rng.uniform(-0.08, 0.08)  # البيوت القديمة لا تصطف تماماً
     face = side * (ALLEY_W / 2 + jog)
     yc = y0 + width / 2
-    box(name + "_ground", (0.5, width, GROUND_H), (face + side * 0.25, yc, GROUND_H / 2), ablaq)
-    box(name + "_upper", (0.5, width, height - GROUND_H), (face + side * 0.25, yc, GROUND_H + (height - GROUND_H) / 2), plaster)
+    # جدار طيني مكسو بالجص فوق قاعدة حجرية منخفضة (كما في أزقة دمشق، لا واجهة حجرية كاملة).
+    warp(box(name + "_ground", (0.5, width, GROUND_H), (face + side * 0.25, yc, GROUND_H / 2), plaster), strength=0.07)
+    plinth_h = rng.uniform(0.9, 1.4)
+    warp(box(name + "_plinth", (0.12, width, plinth_h), (face - side * 0.04, yc, plinth_h / 2), ablaq), strength=0.03, cuts=12)
+    upper = box(name + "_upper", (0.5, width, height - GROUND_H), (face + side * 0.25, yc, GROUND_H + (height - GROUND_H) / 2), plaster)
+    warp(upper, strength=0.1)
+    # جسور خشبية أفقية ظاهرة في الجدار الطيني، كما في بيوت دمشق القديمة.
+    for bz in (GROUND_H + 0.05, GROUND_H + 1.6 + rng.uniform(-0.2, 0.2)):
+        if bz < height - 0.3:
+            box(f"{name}_timber{bz:.2f}", (0.08, width, 0.12), (face - side * 0.02, yc, bz), wood)
     # سقف خشبي بارز بسيط في الأعلى.
     box(name + "_eave", (0.5, width, 0.1), (face - side * 0.1, yc, height + 0.05), wood)
     # باب خشبي في الطابق الأرضي.
@@ -674,13 +911,28 @@ def house(name, side, y0, width, height, mats, rng):
         dy = yc + rng.uniform(-width / 4, width / 4)
         box(name + "_doorframe", (0.06, 1.3, 2.35), (face - side * 0.01, dy, 1.17), ablaq)
         box(name + "_door", (0.08, 1.1, 2.2), (face - side * 0.02, dy, 1.1), door_mat)
+        # قوس حجري نصف دائري فوق الباب، وعتبة حجرية متآكلة أمامه.
+        half_disc(name + "_arch", 0.68, 0.1, (face - side * 0.01, dy, 2.32), side, ablaq)
+        half_disc(name + "_fan", 0.52, 0.06, (face - side * 0.04, dy, 2.32), side, door_mat)
+        step = box(name + "_step", (0.35, 1.4, 0.14), (face - side * 0.15, dy, 0.07), ablaq)
+        bevel(step, 0.04)
         for bz in (0.5, 1.7):
             box(f"{name}_band{bz}", (0.02, 1.1, 0.06), (face - side * 0.065, dy, bz), bpy.data.materials["Iron"])
+        # مسامير حديدية كبيرة على الباب.
+        stud = bpy.data.objects.get("DoorStud")
+        if stud is None:
+            bpy.ops.mesh.primitive_uv_sphere_add(radius=0.022, segments=8, ring_count=6, location=(0, 0, -100))
+            stud = bpy.context.view_layer.objects.active
+            stud.name = "DoorStud"
+            stud.data.materials.append(bpy.data.materials["Iron"])
+        for i in range(4):
+            for j in range(6):
+                instance(stud, f"{name}_stud{i}{j}", (face - side * 0.065, dy - 0.42 + i * 0.28, 0.3 + j * 0.34))
         cylinder(name + "_knocker", 0.05, 0.02, (face - side * 0.07, dy + 0.3, 1.2), bpy.data.materials["Brass"], verts=12, rot=(0, math.pi / 2, 0))
     # نافذة صغيرة بقضبان حديد مضيئة من الداخل.
     if rng.random() < 0.5:
         wy = yc + rng.uniform(-width / 3, width / 3)
-        box(name + "_lowwin", (0.04, 0.6, 0.8), (face - side * 0.01, wy, 2.0), window)
+        box(name + "_lowwin", (0.04, 0.6, 0.8), (face - side * 0.01, wy, 2.0), wood)  # مغلقة ومظلمة
         for k in range(4):
             cylinder(f"{name}_bar{k}", 0.012, 0.8, (face - side * 0.05, wy - 0.22 + k * 0.15, 2.0), bpy.data.materials["Iron"], verts=6)
     # الطابق العلوي البارز فوق الزقاق، محمول على كوابيل خشبية، وفيه مشربية مضيئة.
@@ -702,13 +954,16 @@ def house(name, side, y0, width, height, mats, rng):
         light.name = name + "_baylight"
         light.data.shape = "RECTANGLE"
         light.data.size, light.data.size_y = bw * 0.7, (z1 - z0) * 0.5
-        light.data.energy = 10
+        light.data.energy = 3
         light.data.color = (1.0, 0.62, 0.3)
         light.rotation_euler = (0, -side * math.pi / 2, 0)
     # نافذة علوية مضيئة بلون مختلف قليلاً.
     if rng.random() < 0.6:
         wy = yc + rng.uniform(-width / 3, width / 3)
         box(name + "_topwin", (0.04, 0.7, 1.0), (face - side * 0.01, wy, height - 1.4), window)
+        # درفتا شباك خشبيتان مفتوحتان على الجدار.
+        for s2 in (-1, 1):
+            box(f"{name}_shutter{s2}", (0.04, 0.36, 1.05), (face - side * 0.04, wy + s2 * 0.56, height - 1.4), wood)
 
 
 def sabat(y, plaster, wood, lattice):
@@ -818,11 +1073,28 @@ def build():
     plain_material("Brass", (0.4, 0.26, 0.08), rough=0.3)
     plain_material("Iron", (0.03, 0.03, 0.03), rough=0.4)
     ablaq = ablaq_material()
+    # أثر الزمن: جص متقشر يظهر تحته الطين، حجر متسخ رطب من الأسفل، خشب باهت.
+    age_material(plaster, (0.32, 0.24, 0.16), patch_amount=0.22)
+    age_material(ablaq, (0.12, 0.11, 0.09), patch_amount=0.1, streaks=False)
+    age_material(wood, (0.2, 0.19, 0.17), patch_amount=0.25, base_dirt=False)
+    age_material(door_mat, (0.22, 0.2, 0.18), patch_amount=0.2, base_dirt=False)
     lattice = mashrabiya_material(wood)
-    window = emission_material("WindowGlow", (1.0, 0.58, 0.25), 1.2)
+    window = emission_material("WindowGlow", (1.0, 0.55, 0.22), 0.45)
     mats = (ablaq, plaster, wood, door_mat, lattice, window)
 
     ground = box("Ground", (ALLEY_W + 1.2, ALLEY_L + 8, 0.2), (0, ALLEY_L / 2, -0.1), wet_ground_material())
+    # أرض غير مستوية قليلاً، تتجمع الماء في منخفضاتها.
+    bpy.context.view_layer.objects.active = ground
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.subdivide(number_cuts=60)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    gtex = bpy.data.textures.new("GroundWarp", "CLOUDS")
+    gtex.noise_scale = 1.2
+    gmod = ground.modifiers.new("Uneven", "DISPLACE")
+    gmod.texture = gtex
+    gmod.texture_coords = "GLOBAL"
+    gmod.strength = 0.05
     # قناة تصريف ضحلة في منتصف الزقاق تتجمع فيها مياه المطر.
     box("Gutter", (0.25, ALLEY_L + 8, 0.02), (0, ALLEY_L / 2, 0.001), plain_material("GutterWater", (0.005, 0.006, 0.008), rough=0.02))
 
@@ -832,7 +1104,8 @@ def build():
     sabat(14.0, plaster, wood, lattice)
     # نهاية الزقاق: جدار ببوابة مضيئة يغلق المنظر بدل فراغ أسود.
     box("EndWall", (ALLEY_W + 2, 0.5, 8), (0, ALLEY_L + 2, 4), plaster)
-    box("EndGate", (1.6, 0.05, 2.6), (0, ALLEY_L + 1.74, 1.3), window)
+    box("EndGate", (1.6, 0.05, 2.6), (0, ALLEY_L + 1.74, 1.3), door_mat)
+    box("EndWindow", (0.8, 0.05, 1.0), (0.6, ALLEY_L + 1.74, 5.2), window)
 
     leaf = leaf_mesh("JasmineLeaf", 1.0, 0.5, leaf_material("JasmineLeaves", (0.015, 0.06, 0.02), (0.07, 0.18, 0.06)))
     bark = noise_material("Bark", (0.05, 0.035, 0.025), (0.14, 0.1, 0.07), scale=30, rough=0.95, bump=0.8)
@@ -843,8 +1116,27 @@ def build():
     for i, y in enumerate((3.0, 9.0, 17.5, 24.0)):
         s = -1 if i % 2 == 0 else 1
         x = s * (ALLEY_W / 2 - 0.35)
-        box(f"LampArm{i}", (0.4, 0.04, 0.04), (s * (ALLEY_W / 2 - 0.18), y, 3.55), bpy.data.materials["Iron"])
-        lantern(f"Lamp{i}", (x, y, 3.2), metal, seed=i + 3)
+        old_lantern(f"Lamp{i}", (x, y, 3.0), s, bpy.data.materials["Iron"], seed=i + 3)
+
+    # أسلاك كهرباء متدلية تعبر الزقاق، وأخرى تمتد على الجدران.
+    cable = plain_material("Cable", (0.01, 0.01, 0.01), rough=0.5)
+    for i, y in enumerate((5.0, 11.0, 19.0, 26.0)):
+        z = rng.uniform(5.2, 6.4)
+        wire(f"WireAcross{i}", (-ALLEY_W / 2, y, z), (ALLEY_W / 2, y + rng.uniform(-1.5, 1.5), z + rng.uniform(-0.3, 0.3)), rng.uniform(0.25, 0.5), cable)
+    for s in (-1, 1):
+        for k in range(2):
+            z = 4.9 + k * 0.15
+            wire(f"WireAlong{s}{k}", (s * (ALLEY_W / 2 - 0.05), -2, z), (s * (ALLEY_W / 2 - 0.05), ALLEY_L, z - 0.2), 0.35, cable)
+    # أصص فخارية بنباتات صغيرة عند بعض الأبواب.
+    clay = noise_material("Clay", (0.3, 0.12, 0.05), (0.5, 0.22, 0.1), scale=10, rough=0.8)
+    for i, (s, y) in enumerate(((-1, 4.2), (1, 8.4), (-1, 15.5), (1, 22.5), (-1, 25.0))):
+        x = s * (ALLEY_W / 2 - 0.3)
+        pot = cylinder(f"Pot{i}", 0.18, 0.35, (x, y, 0.17), clay, verts=16)
+        bevel(pot, 0.03)
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.28, location=(x, y, 0.6), segments=12, ring_count=8)
+        bush = bpy.context.view_layer.objects.active
+        bush.name = f"PotPlant{i}"
+        scatter_leaves(bush, leaf, 900, 0.08, rng.randint(0, 9999))
 
     rain(scene)
 
@@ -852,7 +1144,7 @@ def build():
     world = bpy.data.worlds.new("RainyNight")
     world.use_nodes = True
     nt = world.node_tree
-    nt.nodes["Background"].inputs["Color"].default_value = (0.02, 0.03, 0.055, 1)
+    nt.nodes["Background"].inputs["Color"].default_value = (0.005, 0.009, 0.022, 1)
     nt.nodes["Background"].inputs["Strength"].default_value = 1.0
     fog = nt.nodes.new("ShaderNodeVolumePrincipled")
     fog.inputs["Density"].default_value = 0.012
@@ -863,7 +1155,7 @@ def build():
     bpy.ops.object.light_add(type="SUN", rotation=(math.radians(35), 0, math.radians(160)))
     sky = bpy.context.view_layer.objects.active
     sky.name = "CloudLight"
-    sky.data.energy = 0.25
+    sky.data.energy = 0.1
     sky.data.color = (0.55, 0.65, 1.0)
     sky.data.angle = math.radians(20)
 
@@ -883,6 +1175,7 @@ def build():
             kp.easing = "EASE_IN_OUT"
 
     render_settings(scene)
+    scene.view_settings.exposure = -0.4
     return scene
 
 
