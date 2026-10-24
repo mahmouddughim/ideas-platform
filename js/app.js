@@ -242,10 +242,15 @@ async function renderEditor(id, params) {
       alert('ليصل طلبك إلى Claude، سجّل الدخول أولاً من ⚙️ الإعدادات ← المزامنة بين الأجهزة.');
       return;
     }
+    const btn = app.querySelector('[data-action="request-analysis"]');
+    btn.classList.add('sending');
     idea = await saveIdea({ ...idea, analysisRequestedAt: new Date().toISOString() });
-    document.getElementById('analysis').innerHTML = analysisView(idea);
-    cloud.sync();
-    toast('✓ أُرسل الطلب. سيظهر التحليل هنا بعد أن يحللها Claude.');
+    const box = document.getElementById('analysis');
+    box.innerHTML = analysisView(idea);
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await cloud.sync();
+    btn.classList.remove('sending');
+    toast('🚀 وصل الطلب إلى Claude. تابع المراحل هنا.');
   };
   const del = app.querySelector('[data-action="delete"]');
   if (del)
@@ -268,36 +273,58 @@ async function renderEditor(id, params) {
     box.innerHTML = analysisView(idea);
   };
   window.addEventListener('idea-refresh', onRefresh);
+
+  // While Claude works, check for its progress every few seconds instead of every minute.
+  const fast = setInterval(() => {
+    if (!form.isConnected) return clearInterval(fast);
+    if (isAnalysisPending(idea) && document.visibilityState === 'visible') cloud.sync();
+  }, 4000);
 }
 
-// Next time the scheduled Claude check runs after `from` (see config.analysisSchedule, UTC hours).
-function nextRun(from) {
-  const { minute = 0, fromHour = 0, toHour = 23 } = config.analysisSchedule || {};
-  const t = new Date(from);
-  t.setUTCSeconds(0, 0);
-  t.setUTCMinutes(minute);
-  if (t <= new Date(from)) t.setUTCHours(t.getUTCHours() + 1);
-  while (t.getUTCHours() < fromHour || t.getUTCHours() > toHour) t.setUTCHours(t.getUTCHours() + 1);
-  return t;
-}
+// Live stages Claude reports in idea.analysisStatus.stage while it works (0 = not started yet).
+const STAGES = [
+  ['استلم Claude الطلب', 'يقرأ فكرتك وإجاباتك السابقة'],
+  ['يبحث عن مشاريع مشابهة', 'يتصفح الإنترنت بحثاً عن منافسين وتجارب سابقة'],
+  ['يقيّم الرواج ونقاط القوة', 'يقارن فكرتك بما هو موجود'],
+  ['يكتب الاقتراحات والأسئلة', 'اللمسات الأخيرة'],
+];
 
 function requestProgress(idea) {
-  const working = idea.analysisStatus?.state === 'working' && idea.analysisStatus.at >= idea.analysisRequestedAt;
-  const eta = nextRun(Math.max(Date.now(), new Date(idea.analysisRequestedAt).getTime()));
-  const mins = Math.max(1, Math.round((eta - Date.now()) / 60000));
-  const time = eta.toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' });
-  const wait = mins < 60 ? `خلال ${mins} دقيقة تقريباً` : `خلال ${Math.round(mins / 60)} ساعة تقريباً`;
+  const st = idea.analysisStatus;
+  const working = st?.state === 'working' && st.at >= idea.analysisRequestedAt;
+  const stage = working ? Math.max(1, Math.min(STAGES.length, Number(st.stage) || 1)) : 0;
   const step = (done, active, label, sub = '') =>
     `<li class="${done ? 'done' : ''} ${active ? 'active' : ''}"><span class="dot"></span><div><strong>${label}</strong>${sub ? `<small>${sub}</small>` : ''}</div></li>`;
-  return `<div class="progress">
+  const waitHint =
+    config.analysisMode === 'auto'
+      ? 'يبدأ خلال ثوانٍ…'
+      : 'اكتب لـ Claude في المحادثة كلمة "حلل" ليبدأ فوراً.';
+  return `<div class="progress live">
+    <div class="thinker ${working ? 'on' : ''}">
+      <div class="orb"><span>🤖</span></div>
+      <div>
+        <strong>${working ? 'Claude يعمل على فكرتك الآن' : 'الطلب وصل، بانتظار أن يبدأ Claude'}</strong>
+        <small>${working ? 'منذ' : 'أُرسل منذ'} <span data-since="${esc(working ? st.startedAt || st.at : idea.analysisRequestedAt)}"></span></small>
+        <div class="typing"><i></i><i></i><i></i></div>
+      </div>
+    </div>
     <ol class="steps">
       ${step(true, false, 'أُرسل الطلب', fmtDate(idea.analysisRequestedAt))}
-      ${step(working, !working, working ? 'Claude يحلل فكرتك الآن 🤖' : 'في قائمة الانتظار', working ? 'يبحث عن مشاريع مشابهة ويكتب الاقتراحات والأسئلة' : `يبدأ Claude التحليل ${wait} (حوالي ${time})`)}
-      ${step(false, working, 'التحليل جاهز', 'سيظهر هنا تلقائياً، ويستغرق التحليل نفسه دقائق قليلة')}
+      ${working ? '' : step(false, true, 'بانتظار البدء', waitHint)}
+      ${STAGES.map(([label, sub], n) =>
+        step(stage > n + 1, stage === n + 1, label, stage === n + 1 && st.note ? esc(st.note) : sub)
+      ).join('')}
+      ${step(false, false, 'التحليل جاهز', 'سيظهر هنا تلقائياً')}
     </ol>
-    <p class="hint">يفحص Claude الطلبات كل ساعة من الصباح حتى منتصف الليل تقريباً. تريده الآن؟ اكتب له في المحادثة "حلل أفكاري".</p>
   </div>`;
 }
+
+// Tick the "since" timers of live progress panels.
+const ago = (iso) => {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+  return s < 60 ? `${s} ثانية` : `${Math.floor(s / 60)} د ${s % 60} ث`;
+};
+setInterval(() => document.querySelectorAll('[data-since]').forEach((el) => (el.textContent = ago(el.dataset.since))), 1000);
 
 function analysisView(idea) {
   const a = idea.analysis;
@@ -338,7 +365,7 @@ function analysisView(idea) {
     ${
       a.questions?.length
         ? `<h3>أسئلة لك</h3><div class="questions">${a.questions.map(questionView).join('')}</div>
-           <p class="hint">بعد الإجابة صدّر الفكرة مرة أخرى وأرسلها إلى Claude ليكمل التحليل.</p>`
+           <p class="hint">بعد الإجابة اضغط "اطلب تحليل Claude" مرة أخرى ليكمل التحليل بناءً على إجاباتك.</p>`
         : ''
     }
   </div>`;
