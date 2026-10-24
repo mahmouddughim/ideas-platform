@@ -637,13 +637,13 @@ def mashrabiya_material(wood):
 
 
 def rain_drop_material():
+    # قطرة شبه شفافة: تلتقط ضوء الفوانيس دون أن تغطي المشهد.
     mat, nt, bsdf = node_mat("RainDrop")
-    bsdf.inputs["Base Color"].default_value = (0.8, 0.85, 0.9, 1)
-    bsdf.inputs["Roughness"].default_value = 0.05
-    bsdf.inputs["Transmission Weight"].default_value = 1.0
-    bsdf.inputs["IOR"].default_value = 1.33
+    bsdf.inputs["Base Color"].default_value = (0.85, 0.9, 1.0, 1)
+    bsdf.inputs["Roughness"].default_value = 0.1
+    bsdf.inputs["Alpha"].default_value = 0.35
     bsdf.inputs["Emission Color"].default_value = (0.7, 0.75, 0.85, 1)
-    bsdf.inputs["Emission Strength"].default_value = 0.5  # يكفي ليظهر المطر في الظلام
+    bsdf.inputs["Emission Strength"].default_value = 0.04
     return mat
 
 
@@ -742,41 +742,66 @@ def jasmine(name, x, y, z_top, leaf, bark, rng):
 
 
 def rain(scene):
-    # جزيئات مطر تسقط بسرعة ثابتة من سطح فوق الزقاق، وتبدو خطوطاً بفضل ضبابية الحركة.
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.005, depth=0.2, vertices=6, location=(0, 0, -100))
+    # مطر بعقد الهندسة (Geometry Nodes): آلاف القطرات بمواقع عشوائية ثابتة، تسقط بسرعة 9 م/ث،
+    # وتعود إلى الأعلى عند وصولها للأرض. ارتفاع «صندوق المطر» يقسم مسافة السقوط في الحلقة،
+    # فتعود كل قطرة إلى مكانها تماماً في آخر صورة: لا قطع عند التكرار.
+    speed = 9.0 / FPS  # متر لكل صورة
+    height = speed * FRAMES / 8  # 11.25 متر: كل قطرة تسقطه 8 مرات في الحلقة
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.0018, depth=0.28, vertices=6, location=(0, 0, -100))
     drop = bpy.context.view_layer.objects.active
     drop.name = "RainDrop"
     drop.data.materials.append(rain_drop_material())
-    bpy.ops.mesh.primitive_plane_add(size=1, location=(0, ALLEY_L / 2 - 4, 10))
-    emitter = bpy.context.view_layer.objects.active
-    emitter.name = "RainCloud"
-    emitter.scale = (ALLEY_W + 3, ALLEY_L, 1)
-    bpy.ops.object.transform_apply(scale=True)
-    mod = emitter.modifiers.new("Rain", "PARTICLE_SYSTEM")
-    ps = mod.particle_system.settings
-    ps.type = "EMITTER"
-    ps.count = 70000
-    ps.frame_start = -40  # يبدأ قبل أول صورة فيكون المطر ممتلئاً من البداية
-    ps.frame_end = FRAMES + 1
-    ps.lifetime = 30
-    ps.emit_from = "FACE"
-    ps.normal_factor = -9.0  # 9 متر/ثانية نحو الأسفل
-    ps.factor_random = 0.4
-    ps.effector_weights.gravity = 0.0
-    ps.render_type = "OBJECT"
-    ps.instance_object = drop
-    ps.particle_size = 1.0
-    ps.size_random = 0.4
-    ps.use_rotations = True
-    ps.rotation_mode = "VEL"
-    ps.display_percentage = 5
-    emitter.show_instancer_for_render = False
-    scene.render.use_motion_blur = True
-    scene.render.motion_blur_shutter = 0.5
-    # نحسب المطر من بدايته حتى أول صورة، فيكون ممتلئاً عند الضغط على F12 مباشرة.
-    for f in range(int(ps.frame_start), 2):
-        scene.frame_set(f)
-    return emitter
+
+    ng = bpy.data.node_groups.new("Rain", "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    n, link = ng.nodes, ng.links.new
+    out = n.new("NodeGroupOutput")
+    points = n.new("GeometryNodePoints")
+    points.inputs["Count"].default_value = 14000
+    rnd = n.new("FunctionNodeRandomValue")
+    rnd.data_type = "FLOAT_VECTOR"
+    vec_in = [s for s in rnd.inputs if s.enabled and s.type == "VECTOR"]
+    vec_in[0].default_value = (-ALLEY_W / 2 - 0.5, 2.5, 0.0)  # لا قطرات ملاصقة للكاميرا
+    vec_in[1].default_value = (ALLEY_W / 2 + 0.5, ALLEY_L + 2.0, height)
+    rnd_out = next(s for s in rnd.outputs if s.enabled and s.type == "VECTOR")
+    link(rnd_out, points.inputs["Position"])
+    # z = (z0 - frame * speed) mod height
+    pos = n.new("GeometryNodeInputPosition")
+    sep = n.new("ShaderNodeSeparateXYZ")
+    link(pos.outputs["Position"], sep.inputs["Vector"])
+    time = n.new("GeometryNodeInputSceneTime")
+    fall = n.new("ShaderNodeMath")
+    fall.operation = "MULTIPLY"
+    fall.inputs[1].default_value = speed
+    link(time.outputs["Frame"], fall.inputs[0])
+    sub = n.new("ShaderNodeMath")
+    sub.operation = "SUBTRACT"
+    link(sep.outputs["Z"], sub.inputs[0])
+    link(fall.outputs["Value"], sub.inputs[1])
+    wrap = n.new("ShaderNodeMath")
+    wrap.operation = "FLOORED_MODULO"
+    wrap.inputs[1].default_value = height
+    link(sub.outputs["Value"], wrap.inputs[0])
+    comb = n.new("ShaderNodeCombineXYZ")
+    link(sep.outputs["X"], comb.inputs["X"])
+    link(sep.outputs["Y"], comb.inputs["Y"])
+    link(wrap.outputs["Value"], comb.inputs["Z"])
+    setpos = n.new("GeometryNodeSetPosition")
+    link(points.outputs["Points"], setpos.inputs["Geometry"])
+    link(comb.outputs["Vector"], setpos.inputs["Position"])
+    info = n.new("GeometryNodeObjectInfo")
+    info.inputs["Object"].default_value = drop
+    info.inputs["As Instance"].default_value = True
+    inst = n.new("GeometryNodeInstanceOnPoints")
+    link(setpos.outputs["Geometry"], inst.inputs["Points"])
+    link(info.outputs["Geometry"], inst.inputs["Instance"])
+    link(inst.outputs["Instances"], out.inputs["Geometry"])
+
+    mesh = bpy.data.meshes.new("RainField")
+    field = bpy.data.objects.new("RainField", mesh)
+    bpy.context.collection.objects.link(field)
+    field.modifiers.new("Rain", "NODES").node_group = ng
+    return field
 
 
 # ---------- scene ----------
