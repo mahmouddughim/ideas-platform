@@ -15,7 +15,6 @@ desktop (PWA), works offline.
 - Export for Claude / import Claude's analysis (see [docs/claude-format.md](docs/claude-format.md))
 - Claude's analysis view: popularity meter, similar projects, improvements, missed points, questions with yes/no + long answers
 - Manual backup file with a weekly reminder
-
 - Sync between phone and computer through Supabase (email + password sign-in)
 - Weekly backup to Google Drive (folder "Ideas Backup", newest 8 kept) with restore
 
