@@ -638,7 +638,7 @@ def mashrabiya_material(wood):
     nt.links.new(rot.outputs["Vector"], brick.inputs["Vector"])
     glow = nt.nodes.new("ShaderNodeEmission")
     glow.inputs["Color"].default_value = (1.0, 0.6, 0.28, 1)
-    glow.inputs["Strength"].default_value = 0.6  # ضوء يتسرب من بين فتحات الشبكة فقط
+    glow.inputs["Strength"].default_value = 0.3  # ضوء يتسرب من بين فتحات الشبكة فقط
     wood_bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
     wood_bsdf.inputs["Base Color"].default_value = (0.09, 0.045, 0.02, 1)
     wood_bsdf.inputs["Roughness"].default_value = 0.5
@@ -1155,7 +1155,7 @@ def build():
     bpy.ops.object.light_add(type="SUN", rotation=(math.radians(35), 0, math.radians(160)))
     sky = bpy.context.view_layer.objects.active
     sky.name = "CloudLight"
-    sky.data.energy = 0.1
+    sky.data.energy = 0.18
     sky.data.color = (0.55, 0.65, 1.0)
     sky.data.angle = math.radians(20)
 
@@ -1175,7 +1175,7 @@ def build():
             kp.easing = "EASE_IN_OUT"
 
     render_settings(scene)
-    scene.view_settings.exposure = -0.4
+    scene.view_settings.exposure = 0.3
     return scene
 
 
