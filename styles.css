@@ -204,3 +204,4 @@ textarea { resize: vertical; }
 .auth-form { display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
 .drive-file { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
 [hidden] { display: none !important; }
+.pending { color: var(--warn); }

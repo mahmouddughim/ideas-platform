@@ -173,7 +173,7 @@ async function renderEditor(id, params) {
         </div>
       </form>
       <div class="actions">
-        <button class="btn" data-action="export-one">🤖 تصدير هذه الفكرة لـ Claude</button>
+        <button class="btn primary" data-action="request-analysis">🤖 اطلب تحليل Claude</button>
         ${isNew ? '' : '<button class="btn danger" data-action="delete">حذف</button>'}
       </div>
       <div id="analysis">${analysisView(idea)}</div>
@@ -202,10 +202,18 @@ async function renderEditor(id, params) {
   form.addEventListener('change', () => persist());
   current.flush = () => persist.flush();
 
-  app.querySelector('[data-action="export-one"]').onclick = async () => {
+  // Marks the idea for Claude, who reads requests from the synced database.
+  app.querySelector('[data-action="request-analysis"]').onclick = async () => {
     await persist.flush();
-    download(await buildExport({ onlyIds: [idea.id] }), `idea-${stamp()}.json`);
-    toast('تم التصدير. أرسل الملف إلى Claude ليحلله.');
+    if (!idea.title.trim() && !idea.body.trim()) return alert('اكتب الفكرة أولاً.');
+    if (!(await cloud.currentUser())) {
+      alert('ليصل طلبك إلى Claude، سجّل الدخول أولاً من ⚙️ الإعدادات ← المزامنة بين الأجهزة.');
+      return;
+    }
+    idea = await saveIdea({ ...idea, analysisRequestedAt: new Date().toISOString() });
+    document.getElementById('analysis').innerHTML = analysisView(idea);
+    cloud.sync();
+    toast('✓ أُرسل الطلب. سيظهر التحليل هنا بعد أن يحللها Claude.');
   };
   const del = app.querySelector('[data-action="delete"]');
   if (del)
@@ -220,10 +228,14 @@ async function renderEditor(id, params) {
 
 function analysisView(idea) {
   const a = idea.analysis;
+  const pending = idea.analysisRequestedAt && (!a || (a.at || '') < idea.analysisRequestedAt);
+  const note = pending
+    ? `<p class="pending">⏳ طلبتَ التحليل ${fmtDate(idea.analysisRequestedAt)}. سيظهر هنا تلقائياً بعد أن يحللها Claude.</p>`
+    : '';
   if (!a) {
     return `<div class="panel muted">
       <h2>🤖 تحليل Claude</h2>
-      <p>لم تُحلَّل هذه الفكرة بعد. صدّرها وأرسلها إلى Claude، ثم استورد الملف الذي يرجعه من صفحة الإعدادات.</p>
+      ${note || '<p>لم تُحلَّل هذه الفكرة بعد. اضغط "اطلب تحليل Claude" وسيظهر التحليل هنا.</p>'}
     </div>`;
   }
   const list = (title, items) =>
@@ -231,6 +243,7 @@ function analysisView(idea) {
   const pop = a.popularity;
   return `<div class="panel">
     <h2>🤖 تحليل Claude <small>${fmtDate(a.at)}</small></h2>
+    ${note}
     ${a.summary ? `<p class="summary">${esc(a.summary)}</p>` : ''}
     ${
       pop?.score != null
