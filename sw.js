@@ -1,5 +1,5 @@
 // Service worker: caches the app shell so the app opens offline.
-const CACHE = 'ideas-v1';
+const CACHE = 'ideas-v2';
 const SHELL = [
   './',
   'index.html',
@@ -10,6 +10,9 @@ const SHELL = [
   'js/db.js',
   'js/model.js',
   'js/transfer.js',
+  'js/config.js',
+  'js/sync.js',
+  'js/drive.js',
 ];
 
 self.addEventListener('install', (e) => {

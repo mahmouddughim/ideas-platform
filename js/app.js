@@ -4,6 +4,8 @@ import {
   loadIdeas, getIdea, newIdea, saveIdea, deleteIdea, answerQuestion,
 } from './model.js';
 import { buildExport, download, importData, stamp, getMeta, setMeta } from './transfer.js';
+import * as cloud from './sync.js';
+import * as drive from './drive.js';
 
 const app = document.getElementById('app');
 const BACKUP_REMINDER_DAYS = 7;
@@ -133,8 +135,11 @@ async function backupBanner() {
   if (!ideas.length) return '';
   const days = last ? (Date.now() - new Date(last)) / 86400000 : Infinity;
   if (days < BACKUP_REMINDER_DAYS) return '';
+  const button = drive.isConfigured()
+    ? '<button class="btn small" data-action="drive-backup">رفع نسخة إلى Google Drive</button>'
+    : '<button class="btn small" data-action="backup">حفظ نسخة الآن</button>';
   return `<div class="banner">🛟 ${last ? `آخر نسخة احتياطية قبل ${Math.floor(days)} يوماً.` : 'لم تأخذ نسخة احتياطية بعد.'}
-    <button class="btn small" data-action="backup">حفظ نسخة الآن</button></div>`;
+    ${button}</div>`;
 }
 
 // ---------- editor view ----------
@@ -184,11 +189,14 @@ async function renderEditor(id, params) {
   const persist = debounce(async () => {
     const d = readForm();
     if (isNew && !savedOnce && !d.title.trim() && !d.body.trim()) return;
+    // Nothing changed: don't bump updatedAt, or this device would win sync conflicts it shouldn't.
+    if (Object.keys(d).every((k) => JSON.stringify(d[k]) === JSON.stringify(idea[k] ?? (k === 'tags' ? [] : '')))) return;
     idea = await saveIdea({ ...idea, ...d });
+    savedOnce = true;
+    if (!form.isConnected) return; // saved while leaving the page
     document.getElementById('saved').textContent = `✓ تم الحفظ ${fmtDate(idea.updatedAt)}`;
     document.getElementById('versions').innerHTML = versionsView(idea);
-    if (isNew && !savedOnce) history.replaceState(null, '', `#/idea/${idea.id}`);
-    savedOnce = true;
+    if (isNew && location.hash.startsWith('#/new')) history.replaceState(null, '', `#/idea/${idea.id}`);
   }, 700);
   form.addEventListener('input', () => persist());
   form.addEventListener('change', () => persist());
@@ -361,18 +369,20 @@ async function renderSettings() {
         </div>
       </div>
 
-      <div class="panel">
-        <h2>🛟 النسخ الاحتياطي</h2>
-        <p>آخر نسخة احتياطية: <strong>${last ? fmtDate(last) : 'لا توجد بعد'}</strong></p>
-        <p>حتى تفعيل Google Drive، سيذكّرك التطبيق كل ${BACKUP_REMINDER_DAYS} أيام بحفظ نسخة. احفظ الملف في Google Drive أو أي مكان آمن.</p>
-        <button class="btn primary" data-action="backup">حفظ نسخة احتياطية الآن</button>
-      </div>
+      ${await syncPanel()}
 
-      <div class="panel muted">
-        <h2>🔄 المزامنة و Google Drive</h2>
-        <p>قريباً: تسجيل الدخول بحساب Google، مزامنة فورية بين الهاتف والكمبيوتر، ونسخ احتياطي أسبوعي تلقائي إلى Google Drive.</p>
+      ${await drivePanel()}
+
+      <div class="panel">
+        <h2>💾 ملف نسخة احتياطية</h2>
+        <p>آخر نسخة احتياطية: <strong>${last ? fmtDate(last) : 'لا توجد بعد'}</strong></p>
+        <p>يحفظ كل أفكارك في ملف على هذا الجهاز. تستطيع استرجاعه بزر "استيراد ملف" في الأعلى.</p>
+        <button class="btn" data-action="backup">تنزيل ملف نسخة احتياطية</button>
       </div>
     </div>`;
+
+  bindSyncPanel();
+  bindDrivePanel();
 
   app.querySelectorAll('.section-row[data-id]').forEach((f) =>
     f.addEventListener('submit', async (e) => {
@@ -411,6 +421,130 @@ async function renderSettings() {
   });
 }
 
+async function syncPanel() {
+  if (!cloud.isConfigured()) {
+    return `<div class="panel muted"><h2>🔄 المزامنة بين الأجهزة</h2><p>لم تُفعَّل بعد.</p></div>`;
+  }
+  const user = await cloud.currentUser();
+  if (!user) {
+    return `<div class="panel" id="sync-panel">
+      <h2>🔄 المزامنة بين الأجهزة</h2>
+      <p>سجّل الدخول بنفس الحساب على الهاتف والكمبيوتر لتظهر أفكارك في كليهما.</p>
+      <form id="auth-form" class="auth-form">
+        <input name="email" type="email" placeholder="البريد الإلكتروني" required autocomplete="email" dir="ltr">
+        <input name="password" type="password" placeholder="كلمة المرور (6 أحرف على الأقل)" required minlength="6" autocomplete="current-password" dir="ltr">
+        <div class="row">
+          <button class="btn primary" name="mode" value="in">تسجيل الدخول</button>
+          <button class="btn" name="mode" value="up">إنشاء حساب</button>
+        </div>
+      </form>
+    </div>`;
+  }
+  const at = await getMeta('lastSyncAt');
+  return `<div class="panel" id="sync-panel">
+    <h2>🔄 المزامنة بين الأجهزة</h2>
+    <p>مسجّل باسم <strong dir="ltr">${esc(user.email)}</strong></p>
+    <p>آخر مزامنة: <strong id="last-sync">${at ? fmtDate(at) : '—'}</strong></p>
+    <div class="row">
+      <button class="btn primary" data-action="sync-now">مزامنة الآن</button>
+      <button class="btn danger" data-action="sign-out">تسجيل الخروج</button>
+    </div>
+  </div>`;
+}
+
+function bindSyncPanel() {
+  const form = document.getElementById('auth-form');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const { email, password } = Object.fromEntries(new FormData(form));
+      const mode = e.submitter?.value;
+      try {
+        if (mode === 'up') {
+          const needsConfirm = await cloud.signUp(email, password);
+          if (needsConfirm) {
+            alert('أرسلنا رسالة تأكيد إلى بريدك. افتحها واضغط الرابط، ثم عد إلى هنا وسجّل الدخول.');
+            return;
+          }
+        } else {
+          await cloud.signIn(email, password);
+        }
+        toast('تم تسجيل الدخول وبدأت المزامنة');
+        route();
+      } catch (err) {
+        alert(`تعذّر الدخول: ${err.message}`);
+      }
+    });
+  }
+  const now = app.querySelector('[data-action="sync-now"]');
+  if (now) now.onclick = () => cloud.sync().then(() => route());
+  const out = app.querySelector('[data-action="sign-out"]');
+  if (out)
+    out.onclick = async () => {
+      if (!confirm('تسجيل الخروج؟ أفكارك تبقى على هذا الجهاز وفي حسابك.')) return;
+      await cloud.signOut();
+      route();
+    };
+}
+
+async function drivePanel() {
+  if (!drive.isConfigured()) {
+    return `<div class="panel muted"><h2>☁️ Google Drive</h2><p>لم يُفعَّل بعد.</p></div>`;
+  }
+  const last = await getMeta('lastDriveBackupAt');
+  return `<div class="panel">
+    <h2>☁️ نسخ احتياطي إلى Google Drive</h2>
+    <p>كل ${drive.BACKUP_EVERY_DAYS} أيام، عند فتح التطبيق، تُرفع نسخة إلى مجلد "Ideas Backup" في حسابك على Drive، وتُحفظ آخر 8 نسخ.</p>
+    <p>آخر نسخة على Drive: <strong>${last ? fmtDate(last) : 'لا توجد بعد'}</strong></p>
+    <div class="row">
+      <button class="btn primary" data-action="drive-backup">رفع نسخة الآن</button>
+      <button class="btn" data-action="drive-list">استرجاع من Drive</button>
+    </div>
+    <div id="drive-files"></div>
+  </div>`;
+}
+
+function bindDrivePanel() {
+  const list = app.querySelector('[data-action="drive-list"]');
+  if (!list) return;
+  list.onclick = async () => {
+    const box = document.getElementById('drive-files');
+    box.textContent = 'جارٍ التحميل…';
+    try {
+      const files = await drive.listBackups();
+      box.innerHTML = files.length
+        ? files
+            .map((f) => `<div class="drive-file"><span>${fmtDate(f.createdTime)}</span>
+              <button class="btn small" data-restore-drive="${esc(f.id)}">استرجاع</button></div>`)
+            .join('')
+        : '<p>لا توجد نسخ بعد.</p>';
+    } catch (err) {
+      box.textContent = `تعذّر الاتصال بـ Drive: ${err.message}`;
+    }
+  };
+  document.getElementById('drive-files').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-restore-drive]');
+    if (!b || !confirm('استرجاع هذه النسخة؟ ستُدمج مع أفكارك الحالية دون حذف شيء أحدث.')) return;
+    try {
+      const stats = await drive.restoreFromDrive(b.dataset.restoreDrive);
+      toast(`تم الاسترجاع: ${stats.added} جديدة، ${stats.updated} محدّثة`);
+    } catch (err) {
+      alert(`تعذّر الاسترجاع: ${err.message}`);
+    }
+  });
+}
+
+async function driveBackupNow() {
+  try {
+    toast('جارٍ الرفع إلى Google Drive…');
+    await drive.connectDrive();
+    await drive.backupToDrive();
+    toast('✓ تم رفع النسخة إلى Google Drive');
+  } catch (err) {
+    alert(`تعذّر الرفع إلى Drive: ${err.message}`);
+  }
+}
+
 async function backupNow() {
   download(await buildExport(), `ideas-backup-${stamp()}.json`);
   await setMeta('lastBackupAt', new Date().toISOString());
@@ -419,6 +553,7 @@ async function backupNow() {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="backup"]')) backupNow().then(() => route());
+  if (e.target.closest('[data-action="drive-backup"]')) driveBackupNow().then(() => route());
 });
 
 // ---------- router ----------
@@ -449,5 +584,20 @@ async function route(keepFocus) {
 
 window.addEventListener('hashchange', () => route());
 route();
+
+// Show sync state in the top bar, and refresh lists when another device sent changes.
+const syncDot = document.getElementById('sync-status');
+cloud.syncEvents.addEventListener('status', ({ detail }) => {
+  const labels = { syncing: ['⏳', 'جارٍ المزامنة…'], ok: ['✅', 'تمت المزامنة'], error: ['⚠️', `فشلت المزامنة: ${detail.detail}`], idle: ['', ''] };
+  const [icon, title] = labels[detail.state];
+  syncDot.textContent = icon;
+  syncDot.title = title;
+  syncDot.hidden = !icon;
+  const editing = parseHash().parts[0] === 'idea' || parseHash().parts[0] === 'new';
+  if (detail.state === 'ok' && detail.detail.pulled && !editing) route(true);
+});
+cloud.startSync();
+drive.preload();
+drive.autoBackup();
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

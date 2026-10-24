@@ -35,13 +35,23 @@ function run(store, mode, fn) {
   );
 }
 
+// Fires 'change' after every write, so sync can push local edits.
+export const changes = new EventTarget();
+
+function write(store, fn) {
+  return run(store, 'readwrite', fn).then((r) => {
+    changes.dispatchEvent(new CustomEvent('change', { detail: store }));
+    return r;
+  });
+}
+
 export const db = {
   all: (store) => run(store, 'readonly', (s) => s.getAll()),
   get: (store, id) => run(store, 'readonly', (s) => s.get(id)),
-  put: (store, value) => run(store, 'readwrite', (s) => s.put(value)),
+  put: (store, value) => write(store, (s) => s.put(value)),
   putMany: (store, values) =>
-    run(store, 'readwrite', (s) => {
+    write(store, (s) => {
       for (const v of values) s.put(v);
     }),
-  remove: (store, id) => run(store, 'readwrite', (s) => s.delete(id)),
+  remove: (store, id) => write(store, (s) => s.delete(id)),
 };
