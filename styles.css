@@ -205,3 +205,96 @@ textarea { resize: vertical; }
 .drive-file { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
 [hidden] { display: none !important; }
 .pending { color: var(--warn); }
+
+/* ---------- lively look ---------- */
+.topbar {
+  background: linear-gradient(120deg, #4f46e5, #7c3aed 55%, #db2777);
+  border-bottom: none;
+  box-shadow: 0 4px 18px rgba(79, 70, 229, 0.25);
+}
+.topbar .brand, .topbar .btn.ghost { color: #fff; }
+.topbar .btn.primary { background: #fff; color: #4f46e5; border-color: #fff; font-weight: 600; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.hero {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  margin-bottom: 16px;
+  border-radius: 18px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(253, 230, 138, 0.35), transparent 40%),
+    linear-gradient(135deg, #6366f1, #8b5cf6 50%, #ec4899);
+  animation: rise 0.4s ease both;
+}
+.hero h1 { margin: 0; font-size: 1.5rem; }
+.hero p { margin: 4px 0 0; opacity: 0.92; }
+.hero small { opacity: 0.8; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px; }
+.stat {
+  flex: 1 1 90px;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(4px);
+  color: #fff;
+}
+.stat strong { font-size: 1.4rem; line-height: 1.2; }
+.stat span { font-size: 0.8rem; opacity: 0.9; }
+.inspire-cta {
+  justify-self: start;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #fff;
+  color: #7c3aed;
+  font-weight: 600;
+  transition: transform 0.15s;
+}
+.inspire-cta:hover { transform: translateX(-3px); }
+
+.card {
+  position: relative;
+  border-inline-start: 4px solid var(--accent, var(--primary));
+  transition: transform 0.15s, box-shadow 0.15s;
+  animation: rise 0.35s ease both;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1); border-color: var(--accent, var(--primary)); }
+.chip { border-inline-start: 3px solid transparent; }
+.chip.active { border-inline-start-color: var(--accent, var(--primary)); }
+.pulse { animation: pulse 1.6s ease-in-out infinite; }
+
+.progress { margin: 4px 0 10px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.steps li { display: flex; gap: 10px; align-items: flex-start; opacity: 0.55; }
+.steps li.done, .steps li.active { opacity: 1; }
+.steps .dot { flex: none; width: 14px; height: 14px; margin-top: 6px; border-radius: 50%; border: 2px solid var(--muted); }
+.steps li.done .dot { background: var(--ok); border-color: var(--ok); }
+.steps li.active .dot { border-color: var(--primary); border-top-color: transparent; animation: spin 1s linear infinite; }
+.steps small { display: block; color: var(--muted); }
+
+.inspire-hero { background: linear-gradient(135deg, #f59e0b, #ef4444 55%, #db2777); }
+.cards.inspire { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.card.insp { cursor: default; }
+.card.insp p { color: var(--text); }
+.card.insp .who { color: var(--muted); font-size: 0.9rem; }
+.card.insp h4 { margin: 10px 0 4px; font-size: 0.95rem; }
+.card.insp ul { margin: 0; padding-inline-start: 20px; font-size: 0.92rem; }
+.insp-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
+.insp-emoji { font-size: 2rem; line-height: 1; }
+.insp-head h3 { margin: 0 0 4px; }
+.tag.heat { letter-spacing: -2px; }
+.insp-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.source { font-size: 0.85rem; }
+
+@media (max-width: 720px) {
+  .topbar .label { display: none; }
+  .hero h1 { font-size: 1.25rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

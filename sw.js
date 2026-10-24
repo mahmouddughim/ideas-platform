@@ -1,5 +1,5 @@
 // Service worker: caches the app shell so the app opens offline.
-const CACHE = 'ideas-v5';
+const CACHE = 'ideas-v6';
 const SHELL = [
   './',
   'index.html',

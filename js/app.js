@@ -6,6 +6,7 @@ import {
 import { buildExport, download, importData, stamp, getMeta, setMeta } from './transfer.js';
 import * as cloud from './sync.js';
 import * as drive from './drive.js';
+import { config } from './config.js';
 
 const app = document.getElementById('app');
 const BACKUP_REMINDER_DAYS = 7;
@@ -78,11 +79,12 @@ async function renderList(params) {
 
   app.innerHTML = `
     ${await backupBanner()}
+    ${hero(ideas)}
     <div class="layout">
       <aside class="sections">
         <a class="chip ${!f.s ? 'active' : ''}" href="${link({ s: '' })}">📚 الكل <span>${ideas.length}</span></a>
         ${sections
-          .map((s) => `<a class="chip ${f.s === s.id ? 'active' : ''}" href="${link({ s: s.id })}">${esc(s.icon || '📁')} ${esc(s.name)} <span>${count(s.id)}</span></a>`)
+          .map((s) => `<a class="chip ${f.s === s.id ? 'active' : ''}" style="--accent:${colorFor(s.id)}" href="${link({ s: s.id })}">${esc(s.icon || '📁')} ${esc(s.name)} <span>${count(s.id)}</span></a>`)
           .join('')}
         <a class="chip add" href="#/settings">+ قسم</a>
       </aside>
@@ -113,10 +115,39 @@ async function renderList(params) {
   form.addEventListener('submit', (e) => e.preventDefault());
 }
 
+const SECTION_COLORS = ['#6366f1', '#0ea5e9', '#f59e0b', '#10b981', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6'];
+const colorFor = (id = '') => SECTION_COLORS[[...id].reduce((n, c) => n + c.charCodeAt(0), 0) % SECTION_COLORS.length];
+
+function hero(ideas) {
+  const h = new Date().getHours();
+  const hello = h < 12 ? 'صباح الخير' : h < 18 ? 'مساء الخير' : 'مساء النور';
+  const unanswered = ideas.reduce((n, i) => n + openQuestions(i), 0);
+  const waiting = ideas.filter(isAnalysisPending).length;
+  const analyzed = ideas.filter((i) => i.analysis).length;
+  const stat = (n, label, href) => `<a class="stat" href="${href}"><strong>${n}</strong><span>${label}</span></a>`;
+  return `<section class="hero">
+    <div>
+      <h1>${hello} 👋</h1>
+      <p>${ideas.length ? 'كل فكرة عظيمة بدأت بسطر واحد. ماذا يدور في رأسك اليوم؟' : 'ابدأ بأول فكرة، أو استلهم من مشاكل الناس اليوم.'}</p>
+    </div>
+    <div class="stats">
+      ${stat(ideas.length, 'فكرة', '#/')}
+      ${stat(analyzed, 'محللة', '#/')}
+      ${stat(unanswered, 'سؤال بانتظارك', '#/')}
+      ${waiting ? stat(waiting, 'قيد التحليل', '#/') : ''}
+    </div>
+    <a class="inspire-cta" href="#/inspire">✨ إلهام اليوم: مشاكل تحتاج حلاً ←</a>
+  </section>`;
+}
+
+const openQuestions = (i) => (i.analysis?.questions || []).filter((q) => q.answer === undefined || q.answer === null || q.answer === '').length;
+const isAnalysisPending = (i) => i.analysisRequestedAt && (i.analysis?.at || '') < i.analysisRequestedAt;
+
 function card(i, section) {
-  const pending = (i.analysis?.questions || []).filter((q) => q.answer === undefined || q.answer === null).length;
+  const pending = openQuestions(i);
+  const waiting = isAnalysisPending(i);
   return `
-    <a class="card" href="#/idea/${esc(i.id)}">
+    <a class="card" href="#/idea/${esc(i.id)}" style="--accent:${colorFor(i.sectionId)}">
       <h3>${esc(i.title || 'فكرة بلا عنوان')}</h3>
       <p>${esc((i.body || '').slice(0, 140))}${(i.body || '').length > 140 ? '…' : ''}</p>
       <div class="meta">
@@ -124,6 +155,7 @@ function card(i, section) {
         <span class="tag">${AUDIENCES[i.audience] || ''}</span>
         <span class="tag status-${esc(i.status)}">${STATUSES[i.status] || ''}</span>
         ${i.analysis ? `<span class="tag ai">🤖 محللة${i.analysis.popularity?.score != null ? ` · ${i.analysis.popularity.score}%` : ''}</span>` : ''}
+        ${waiting ? `<span class="tag ai pulse">⏳ قيد التحليل</span>` : ''}
         ${pending ? `<span class="tag warn">❓ ${pending} سؤال بانتظارك</span>` : ''}
       </div>
     </a>`;
@@ -224,14 +256,52 @@ async function renderEditor(id, params) {
     };
 
   bindAnalysis(() => idea, (updated) => (idea = updated));
+
+  // Show Claude's progress and new analysis as soon as sync brings them in.
+  const onRefresh = async () => {
+    if (!form.isConnected) return window.removeEventListener('idea-refresh', onRefresh);
+    const box = document.getElementById('analysis');
+    if (box.contains(document.activeElement)) return; // don't disturb typing an answer
+    const fresh = await getIdea(idea.id);
+    if (!fresh) return;
+    idea = { ...idea, analysis: fresh.analysis, analysisStatus: fresh.analysisStatus };
+    box.innerHTML = analysisView(idea);
+  };
+  window.addEventListener('idea-refresh', onRefresh);
+}
+
+// Next time the scheduled Claude check runs after `from` (see config.analysisSchedule, UTC hours).
+function nextRun(from) {
+  const { minute = 0, fromHour = 0, toHour = 23 } = config.analysisSchedule || {};
+  const t = new Date(from);
+  t.setUTCSeconds(0, 0);
+  t.setUTCMinutes(minute);
+  if (t <= new Date(from)) t.setUTCHours(t.getUTCHours() + 1);
+  while (t.getUTCHours() < fromHour || t.getUTCHours() > toHour) t.setUTCHours(t.getUTCHours() + 1);
+  return t;
+}
+
+function requestProgress(idea) {
+  const working = idea.analysisStatus?.state === 'working' && idea.analysisStatus.at >= idea.analysisRequestedAt;
+  const eta = nextRun(Math.max(Date.now(), new Date(idea.analysisRequestedAt).getTime()));
+  const mins = Math.max(1, Math.round((eta - Date.now()) / 60000));
+  const time = eta.toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' });
+  const wait = mins < 60 ? `خلال ${mins} دقيقة تقريباً` : `خلال ${Math.round(mins / 60)} ساعة تقريباً`;
+  const step = (done, active, label, sub = '') =>
+    `<li class="${done ? 'done' : ''} ${active ? 'active' : ''}"><span class="dot"></span><div><strong>${label}</strong>${sub ? `<small>${sub}</small>` : ''}</div></li>`;
+  return `<div class="progress">
+    <ol class="steps">
+      ${step(true, false, 'أُرسل الطلب', fmtDate(idea.analysisRequestedAt))}
+      ${step(working, !working, working ? 'Claude يحلل فكرتك الآن 🤖' : 'في قائمة الانتظار', working ? 'يبحث عن مشاريع مشابهة ويكتب الاقتراحات والأسئلة' : `يبدأ Claude التحليل ${wait} (حوالي ${time})`)}
+      ${step(false, working, 'التحليل جاهز', 'سيظهر هنا تلقائياً، ويستغرق التحليل نفسه دقائق قليلة')}
+    </ol>
+    <p class="hint">يفحص Claude الطلبات كل ساعة من الصباح حتى منتصف الليل تقريباً. تريده الآن؟ اكتب له في المحادثة "حلل أفكاري".</p>
+  </div>`;
 }
 
 function analysisView(idea) {
   const a = idea.analysis;
-  const pending = idea.analysisRequestedAt && (!a || (a.at || '') < idea.analysisRequestedAt);
-  const note = pending
-    ? `<p class="pending">⏳ طلبتَ التحليل ${fmtDate(idea.analysisRequestedAt)}. سيظهر هنا تلقائياً بعد أن يحللها Claude.</p>`
-    : '';
+  const note = isAnalysisPending(idea) ? requestProgress(idea) : '';
   if (!a) {
     return `<div class="panel muted">
       <h2>🤖 تحليل Claude</h2>
@@ -342,6 +412,71 @@ document.addEventListener('click', async (e) => {
   toast('تم الاسترجاع');
   route();
 });
+
+// ---------- inspiration view ----------
+
+async function loadInspiration() {
+  try {
+    const res = await fetch('data/inspiration.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    await setMeta('inspiration', data);
+    return data;
+  } catch {
+    return getMeta('inspiration'); // offline: last copy we saw
+  }
+}
+
+async function renderInspire() {
+  app.innerHTML = '<div class="empty"><p>✨ جارٍ جلب الإلهام…</p></div>';
+  const data = await loadInspiration();
+  if (!data?.items?.length) {
+    app.innerHTML = '<div class="empty"><p>تعذّر جلب الإلهام الآن. جرّب لاحقاً.</p><a class="btn" href="#/">رجوع</a></div>';
+    return;
+  }
+  const flames = (n) => '🔥'.repeat(Math.max(1, Math.min(5, n || 1)));
+  app.innerHTML = `
+    <section class="hero inspire-hero">
+      <div>
+        <h1>✨ إلهام اليوم</h1>
+        <p>${esc(data.note || '')}</p>
+        <small>آخر تحديث: ${fmtDate(data.updatedAt)}</small>
+      </div>
+    </section>
+    <div class="cards inspire">
+      ${data.items
+        .map(
+          (it, n) => `<article class="card insp" style="--accent:${SECTION_COLORS[n % SECTION_COLORS.length]};animation-delay:${n * 60}ms">
+            <div class="insp-head"><span class="insp-emoji">${esc(it.emoji || '💡')}</span>
+              <div><h3>${esc(it.title)}</h3>
+              <div class="meta"><span class="tag">📍 ${esc(it.region || '')}</span><span class="tag">${esc(it.category || '')}</span><span class="tag heat" title="مدى انتشار المشكلة">${flames(it.heat)}</span></div></div>
+            </div>
+            <p>${esc(it.problem)}</p>
+            ${it.who ? `<p class="who">👥 <strong>من يعاني:</strong> ${esc(it.who)}</p>` : ''}
+            ${it.seeds?.length ? `<h4>💡 بذور أفكار</h4><ul>${it.seeds.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+            <div class="insp-foot">
+              ${it.source?.url ? `<a href="${esc(it.source.url)}" target="_blank" rel="noopener" class="source">📰 ${esc(it.source.name || 'المصدر')}</a>` : '<span></span>'}
+              <button class="btn small primary" data-adopt="${esc(it.id)}">حوّلها إلى فكرة ←</button>
+            </div>
+          </article>`
+        )
+        .join('')}
+    </div>`;
+
+  app.querySelectorAll('[data-adopt]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const it = data.items.find((x) => x.id === b.dataset.adopt);
+      const idea = newIdea();
+      idea.title = it.title;
+      idea.body = `المشكلة: ${it.problem}\n\nمن يعاني: ${it.who || ''}\n\nبذور أفكار:\n${(it.seeds || []).map((x) => `- ${x}`).join('\n')}\n\nفكرتي للحل: `;
+      idea.tags = ['إلهام', it.category].filter(Boolean);
+      idea.audience = 'publish';
+      const saved = await saveIdea(idea);
+      location.hash = `#/idea/${saved.id}`;
+      toast('✨ أُنشئت الفكرة. أكمل "فكرتي للحل" بأسلوبك');
+    })
+  );
+}
 
 // ---------- settings view ----------
 
@@ -584,6 +719,7 @@ async function route(keepFocus) {
   if (parts[0] === 'idea' && parts[1]) await renderEditor(parts[1], params);
   else if (parts[0] === 'new') await renderEditor(null, params);
   else if (parts[0] === 'settings') await renderSettings();
+  else if (parts[0] === 'inspire') await renderInspire();
   else await renderList(params);
   if (focused) {
     const el = app.querySelector(`[name="${focused}"]`);
@@ -608,6 +744,7 @@ cloud.syncEvents.addEventListener('status', ({ detail }) => {
   syncDot.hidden = !icon;
   const editing = parseHash().parts[0] === 'idea' || parseHash().parts[0] === 'new';
   if (detail.state === 'ok' && detail.detail.pulled && !editing) route(true);
+  if (detail.state === 'ok' && editing) window.dispatchEvent(new Event('idea-refresh'));
 });
 cloud.startSync();
 drive.preload();

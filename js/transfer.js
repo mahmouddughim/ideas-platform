@@ -84,7 +84,9 @@ export async function importData(data) {
     const analysis = mergeAnalysis(mine.analysis, inc.analysis);
     if (analysis !== mine.analysis && inc.analysis) stats.analyzed++;
     if (base !== mine) stats.updated++;
-    await db.put('ideas', { ...base, analysis });
+    // Claude's progress marker ("working"/"done") travels without changing updatedAt.
+    const status = newer(inc.analysisStatus?.at, mine.analysisStatus?.at) ? inc.analysisStatus : base.analysisStatus;
+    await db.put('ideas', { ...base, analysis, analysisStatus: status });
   }
   return stats;
 }
