@@ -20,10 +20,10 @@ ARGV = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
 # count: عدد القطرات، length: طول الخط بالبكسل (ضبابية الحركة)، blur: نعومة الحواف،
 # speed: بكسل لكل إطار، alpha: الشفافية، tilt: ميلان الريح.
 LAYERS = (
-    dict(count=2600, length=(18, 34), blur=0.8, speed=26, alpha=0.22, tilt=0.06),
-    dict(count=1300, length=(40, 70), blur=1.3, speed=46, alpha=0.26, tilt=0.07),
-    dict(count=420, length=(90, 150), blur=2.4, speed=80, alpha=0.24, tilt=0.08),
-    dict(count=70, length=(220, 360), blur=5.0, speed=150, alpha=0.16, tilt=0.09),
+    dict(count=2600, length=(18, 34), blur=0.8, speed=26, alpha=0.30, tilt=0.06),
+    dict(count=1300, length=(40, 70), blur=1.3, speed=46, alpha=0.36, tilt=0.07),
+    dict(count=420, length=(90, 150), blur=2.4, speed=80, alpha=0.34, tilt=0.08),
+    dict(count=70, length=(220, 360), blur=5.0, speed=150, alpha=0.24, tilt=0.09),
 )
 SPLASHES_PER_FRAME = 14
 GROUND_TOP = 0.56  # أعلى نقطة من الأرض تظهر عليها دوائر الرذاذ (نسبة من الارتفاع)
@@ -101,8 +101,11 @@ class Rain:
         self.w, self.h, self.n = w, h, frames
         rng = np.random.default_rng(seed)
         self.layers = []
+        # القيم مضبوطة على 1080p، وتتناسب مع أي دقة أخرى حتى لا يتغير شكل المطر.
+        k = h / 1080.0
         for spec in LAYERS:
-            lo, hi = spec["length"]
+            spec = dict(spec, speed=spec["speed"] * k, blur=spec["blur"] * k)
+            lo, hi = spec["length"][0] * k, spec["length"][1] * k
             length = rng.uniform(lo, hi, spec["count"]).astype(np.float32)
             # مسافة الدورة تقسم مسار الإطارات كلها بعدد صحيح، فتتكرر الحركة بلا قطع.
             travel = spec["speed"] * frames
@@ -157,7 +160,7 @@ class Rain:
         yy, xx = np.mgrid[-14:15, -30:31].astype(np.float32)
         for x, y, a, s in zip(sx[live], sy[live], age[live], strength[live]):
             depth = (y / h - HORIZON) / (1 - HORIZON)  # أكبر قرب الكاميرا
-            r = (1.5 + a * 1.4) * (0.4 + depth * 1.4)
+            r = (1.5 + a * 1.4) * (0.4 + depth * 1.4) * h / 1080.0
             rr = np.sqrt(xx ** 2 + (yy / 0.32) ** 2)
             ring = np.exp(-((rr - r) ** 2) / (2 * (1.0 + depth * 1.5) ** 2))
             ring *= s * (1 - a / life) ** 1.5 * 0.22
