@@ -9,6 +9,9 @@
 #   افتح Blender ← Scripting ← Open ← هذا الملف ← Run Script، ثم F12 لصورة واحدة.
 #   صورة تجريبية سريعة:  blender -b -P damascus_rain_alley.py -- --preview preview.png
 #   رندر الحلقة كاملة:   blender -b -P damascus_rain_alley.py -- --render out/frame_
+#   إطار بالجودة الكاملة: blender -b -P damascus_rain_alley.py -- --still still.png
+#   مقطع تجريبي:          ... -- --render clip/frame_ --frames 1-48 --half
+#   المطر يُضاف بعد الرندر: blender -b --factory-startup -P rain_post.py -- <الإطارات> <الناتج>
 #   بلا تنزيل خامات:      أضف --offline
 #
 # الخامات الحقيقية تُنزَّل من Poly Haven إلى ~/BlenderAssets/polyhaven (تحتاج Allow Online Access).
@@ -1279,7 +1282,18 @@ def build():
 
 if __name__ == "__main__":
     scene = build()
-    if "--render" in ARGV:
+    if "--frames" in ARGV:
+        # جزء من الحلقة فقط، مثل 1-48 لمقطع تجريبي من ثانيتين.
+        a, b = ARGV[ARGV.index("--frames") + 1].split("-")
+        scene.frame_start, scene.frame_end = int(a), int(b)
+    if "--half" in ARGV:
+        scene.render.resolution_percentage = 50
+    if "--still" in ARGV:
+        # إطار واحد بالجودة الكاملة للتقييم قبل أي رندر طويل.
+        scene.frame_set(1)
+        scene.render.filepath = ARGV[ARGV.index("--still") + 1]
+        bpy.ops.render.render(write_still=True)
+    elif "--render" in ARGV:
         scene.render.filepath = ARGV[ARGV.index("--render") + 1]
         bpy.ops.render.render(animation=True)
     elif "--preview" in ARGV:
