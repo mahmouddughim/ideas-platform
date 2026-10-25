@@ -122,6 +122,67 @@ def texture_maps(slot):
     return found
 
 
+_models = {}
+
+
+def ph_model(asset_id):
+    # نموذج ثلاثي الأبعاد حقيقي من Poly Haven (glTF 1k)، يُستورد مرة واحدة إلى مجموعة مخفية
+    # ثم يُكرَّر بنسخ خفيفة عبر place_model. يعيد None بلا إنترنت، فيكمل المشهد بالأشكال البسيطة.
+    if asset_id in _models:
+        return _models[asset_id]
+    folder = os.path.join(ASSETS_DIR, "models", asset_id)
+    path = None
+    if os.path.isdir(folder):
+        path = next((os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".gltf")), None)
+    if not path and not OFFLINE:
+        try:
+            print(f"تنزيل نموذج: {asset_id}")
+            entry = ph_get(f"/files/{asset_id}")["gltf"]
+            entry = entry.get("1k") or entry.get("2k")
+            gltf = entry["gltf"]
+            for rel, inc in gltf.get("include", {}).items():
+                download(inc["url"], os.path.join(folder, *rel.split("/")))
+            path = os.path.join(folder, os.path.basename(gltf["url"]))
+            download(gltf["url"], path)
+            with open(os.path.join(folder, "source.txt"), "w") as f:
+                f.write(f"https://polyhaven.com/a/{asset_id}\n")
+        except Exception as e:
+            print(f"تعذر تنزيل نموذج {asset_id}: {e}")
+            path = None
+    if not path:
+        _models[asset_id] = None
+        return None
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=path)
+    objs = [o for o in bpy.data.objects if o not in before]
+    coll = bpy.data.collections.new("PH_" + asset_id)
+    for o in objs:
+        for c in list(o.users_collection):
+            c.objects.unlink(o)
+        coll.objects.link(o)
+    # قاعدة النموذج في منتصفه السفلي، حتى يقف على الأرض حيث نضعه.
+    pts = [o.matrix_world @ mathutils.Vector(c) for o in objs if o.type == "MESH" for c in o.bound_box]
+    lo = mathutils.Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+    hi = mathutils.Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+    coll.instance_offset = ((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z)
+    coll["height"] = hi.z - lo.z
+    _models[asset_id] = coll
+    return coll
+
+
+def place_model(coll, name, loc, height, rot_z=0.0):
+    # نسخة من النموذج بارتفاع محدد بالمتر.
+    ob = bpy.data.objects.new(name, None)
+    ob.instance_type = "COLLECTION"
+    ob.instance_collection = coll
+    ob.location = loc
+    ob.rotation_euler = (0, 0, rot_z)
+    s = height / max(coll["height"], 1e-4)
+    ob.scale = (s, s, s)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
 def node_mat(name):
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -674,6 +735,24 @@ def old_lantern(name, loc, side, iron, seed):
     scroll.name = name + "_scroll"
     scroll.data.materials.append(iron)
     cylinder(name + "_chain", 0.006, 0.3, (x, y, z + 0.47), iron, verts=6)
+    model = ph_model("Lantern_01")
+    if model:
+        # فانوس حقيقي من Poly Haven، وفي داخله لهب صغير يضيء الزجاج.
+        for o in model.objects:
+            o.visible_shadow = False
+        place_model(model, name + "_model", (x, y, z - 0.12), 0.42, rot_z=seed)
+        bpy.ops.mesh.primitive_ico_sphere_add(radius=0.025, subdivisions=2, location=(x, y, z + 0.04))
+        flame = bpy.context.view_layer.objects.active
+        flame.name = name + "_flame"
+        flame.scale.z = 1.8
+        flame.data.materials.append(emission_material(name + "_fire", (1.0, 0.45, 0.12), 25.0))
+        flame.visible_shadow = False
+    else:
+        old_lantern_body(name, x, y, z, iron)
+    lantern_light(name, x, y, z, seed)
+
+
+def old_lantern_body(name, x, y, z, iron):
     glass = emission_material(name + "_glass", (1.0, 0.5, 0.15), 2.0)
     bpy.ops.mesh.primitive_cone_add(vertices=6, radius1=0.08, radius2=0.12, depth=0.3, location=(x, y, z))
     body = bpy.context.view_layer.objects.active
@@ -690,6 +769,9 @@ def old_lantern(name, loc, side, iron, seed):
     roof.name = name + "_roof"
     roof.data.materials.append(iron)
     cylinder(name + "_base", 0.09, 0.03, (x, y, z - 0.16), iron, verts=6)
+
+
+def lantern_light(name, x, y, z, seed):
     bpy.ops.object.light_add(type="POINT", location=(x, y, z))
     light = bpy.context.view_layer.objects.active
     light.name = name + "_light"
@@ -1127,10 +1209,20 @@ def build():
         for k in range(2):
             z = 4.9 + k * 0.15
             wire(f"WireAlong{s}{k}", (s * (ALLEY_W / 2 - 0.05), -2, z), (s * (ALLEY_W / 2 - 0.05), ALLEY_L, z - 0.2), 0.35, cable)
-    # أصص فخارية بنباتات صغيرة عند بعض الأبواب.
+    # أصص ونباتات وأغراض بيت حقيقية (Poly Haven) على جانبي الزقاق، وإلا أصص بسيطة.
+    props = (
+        ("potted_plant_02", 0.75, (-1, 4.2)), ("planter_pot_clay", 0.45, (1, 8.4)),
+        ("wooden_bucket_01", 0.3, (1, 8.95)), ("wooden_stool_01", 0.45, (-1, 11.3)),
+        ("potted_plant_02", 0.8, (-1, 15.5)), ("wooden_crate_02", 0.4, (1, 17.0)),
+        ("antique_ceramic_vase_01", 0.55, (1, 22.5)), ("potted_plant_02", 0.7, (-1, 25.0)),
+    )
     clay = noise_material("Clay", (0.3, 0.12, 0.05), (0.5, 0.22, 0.1), scale=10, rough=0.8)
-    for i, (s, y) in enumerate(((-1, 4.2), (1, 8.4), (-1, 15.5), (1, 22.5), (-1, 25.0))):
+    for i, (asset, h, (s, y)) in enumerate(props):
         x = s * (ALLEY_W / 2 - 0.3)
+        model = ph_model(asset)
+        if model:
+            place_model(model, f"Prop{i}", (x, y, 0.0), h, rot_z=rng.uniform(0, 6.28))
+            continue
         pot = cylinder(f"Pot{i}", 0.18, 0.35, (x, y, 0.17), clay, verts=16)
         bevel(pot, 0.03)
         bpy.ops.mesh.primitive_uv_sphere_add(radius=0.28, location=(x, y, 0.6), segments=12, ring_count=8)
@@ -1138,7 +1230,9 @@ def build():
         bush.name = f"PotPlant{i}"
         scatter_leaves(bush, leaf, 900, 0.08, rng.randint(0, 9999))
 
-    rain(scene)
+    # المطر يُضاف لاحقاً فوق الفيديو (rain_post.py) إلا إذا طُلب داخل المشهد.
+    if "--blender-rain" in ARGV:
+        rain(scene)
 
     # سماء غائمة داكنة وضباب ماطر يرسم هالة حول كل ضوء.
     world = bpy.data.worlds.new("RainyNight")
@@ -1164,7 +1258,11 @@ def build():
     bpy.ops.object.camera_add(location=cam_loc, rotation=(math.radians(88), 0, 0))
     cam = bpy.context.view_layer.objects.active
     cam.name = "Camera"
-    cam.data.lens = 24
+    cam.data.lens = 30
+    # عمق ميدان خفيف كعدسة سينمائية: الفانوس الأول واضح والعمق يذوب.
+    cam.data.dof.use_dof = True
+    cam.data.dof.focus_distance = 5.5
+    cam.data.dof.aperture_fstop = 2.8
     scene.camera = cam
     for frame, y in ((1, cam_loc[1]), (FRAMES // 2 + 1, cam_loc[1] + 1.2), (FRAMES + 1, cam_loc[1])):
         cam.location.y = y
